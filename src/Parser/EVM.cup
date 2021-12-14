@@ -1,0 +1,448 @@
+package Parser;
+import java_cup.runtime.*;
+import java.util.*;
+import Scanner.Scanner;
+import Instruction.*;
+import Utilities.*;
+import Utilities.Error;
+import Parser.*;
+import EVM.*;
+import EVM.Class;
+
+/* Preliminaries to set up and use the scanner.  */
+
+action code {:
+  short access_val;
+  public Class classFile;
+  public Scanner scanner;
+  public TreeMap<String, String> tm = null;
+
+  public void syntax_error(java_cup.runtime.Symbol current) {
+    System.out.println("Syntax error." + current.value);
+    System.exit(1);    
+  }	
+:};
+
+parser code {:
+  // parser code
+  public Scanner scanner;
+  public short access_val;
+  public Class classFile;
+
+
+  public parser(Scanner l) {
+    this();
+    scanner=l;
+  }
+
+  public void report_error(String message, Object info)  {
+    System.out.println("Warning - " + message);
+    System.exit(1);
+  }
+
+  public void report_fatal_error(String message, Object info)  {
+    System.out.println("Error - " + message);
+    System.exit(-1);
+  }
+
+  public parser (Class classFile, Scanner scanner) {
+    super();
+    this.scanner = scanner;
+    this.classFile = classFile;
+  }
+:};
+
+init with {:
+	action_obj.classFile = classFile;
+:};
+
+scan with {: 
+	return scanner.next_token();
+:};
+
+/* Terminals (tokens returned by the scanner). */
+terminal token
+    // Directives (words beginning with a '.')
+    DCATCH, DCLASS, DEND, DFIELD, DLIMIT, DLINE, DMETHOD, DSET, DSUPER,
+    DSOURCE, DTHROWS, DVAR, DIMPLEMENTS, DINTERFACE,
+
+    // keywords for directives
+    TO, USING, IS, FROM, METHOD,
+
+    // access types
+    ABSTRACT, FINAL, INTERFACE, NATIVE, PRIVATE, PROTECTED, PUBLIC, STATIC,
+    SYNCHRONIZED, TRANSIENT, VOLATILE,
+
+    // complex instructions
+    LOOKUPSWITCH, TABLESWITCH, DEFAULT,
+
+    // special symbols
+    EQ, COLON, SEP;
+
+terminal String Str, Word, Insn;
+terminal Integer Int;
+terminal Number Num;
+
+non terminal String classname;
+non terminal Object optional_default, item;
+
+/* Non terminals */
+non terminal Object
+       access_item, access_items, access_list, catch_expr, class_spec,
+       defmethod, directive, endmethod, field_list,
+       field_spec, fields, implements, implements_list, implements_spec,
+       jas_file, limit_expr, lookup,
+       lookup_args, lookup_default, lookup_entry, lookup_list, method_list,
+       method_spec, methods, set_expr, source_spec,
+       statements, stmnt, super_spec, table, table_args, line_expr,
+       table_default, table_entry, table_list, throws_expr, var_expr,
+       seps, seps_opt
+;
+
+non terminal Instruction instruction, simple_instruction, complex_instruction;
+non terminal String label;
+
+non terminal Object access;
+
+/* The grammar */
+
+jas_file ::=
+	  seps_opt
+	  source_spec 
+          class_spec 
+          super_spec 
+	  implements 
+          fields      
+          methods     
+    	;
+
+seps_opt ::=
+	  seps
+	| /* empty */
+	;
+
+seps ::= 
+	  SEP
+	| seps SEP
+	;	
+	
+
+// ---- Source specification
+
+source_spec ::=
+	  DSOURCE Word:w seps     		{: classFile.setSource(w); :}
+	| /* nothing */
+	;
+
+// ---- Class specification
+
+class_spec ::=
+    	  DCLASS access:a classname:name seps	{: 
+                                                   classFile.setClassName(name,access_val); :}
+    	| DINTERFACE access:a classname:name seps
+						{: classFile.setClassName(name,access_val); :}
+  	;
+
+classname ::=
+    	  Word:w				{: RESULT = w; :}
+   	;
+
+access ::=					{: access_val = 0; :}
+          access_list				
+ 	;
+
+
+access_list ::= 
+	  access_items 
+	| /* empty */;
+
+access_items ::= 
+	  access_items access_item 
+	| access_item 
+	;
+
+access_item ::=
+          PUBLIC      				{: access_val |= RuntimeConstants.ACC_PUBLIC; :}
+    	| PRIVATE     				{: access_val |= RuntimeConstants.ACC_PRIVATE; :}
+    	| PROTECTED   				{: access_val |= RuntimeConstants.ACC_PROTECTED; :}
+	| STATIC      				{: access_val |= RuntimeConstants.ACC_STATIC; :}
+	| FINAL       				{: access_val |= RuntimeConstants.ACC_FINAL; :}
+	| SYNCHRONIZED				{: access_val |= RuntimeConstants.ACC_SYNCHRONIZED; :}
+	| VOLATILE    				{: access_val |= RuntimeConstants.ACC_VOLATILE; :}
+	| TRANSIENT   				{: access_val |= RuntimeConstants.ACC_TRANSIENT; :}
+	| NATIVE      				{: access_val |= RuntimeConstants.ACC_NATIVE; :}
+	| INTERFACE   				{: access_val |= RuntimeConstants.ACC_INTERFACE; :}
+	| ABSTRACT    				{: access_val |= RuntimeConstants.ACC_ABSTRACT; :}
+	;
+
+// ---- Superclass specification
+
+super_spec ::=
+	  DSUPER classname:name seps		{: classFile.setSuperClass(name); :}
+	;
+
+// ---- Implements specification
+
+implements ::= 
+	  implements_list seps 
+	| /* empty */ 
+	;
+
+implements_list ::= 
+	  implements_list implements_spec 
+	| implements_spec 
+	;
+
+implements_spec ::= 
+	  DIMPLEMENTS classname:name 		{: classFile.addInterface(name); :}
+    	;
+
+// ---- Fields
+
+fields ::= 
+	  field_list 
+	| /* empty */ 
+	;
+
+field_list ::= 
+	  field_list field_spec 
+	| field_spec 
+	;
+
+field_spec ::=
+    	  DFIELD access:a Word:name Word:sig optional_default:v seps
+						{: classFile.addField(new Field(access_val, name, sig, v)); :} 
+	;
+
+// default value for a field
+optional_default ::=
+	  EQ item:v	 {: RESULT = v; :}
+     	| /* empty */    
+  	;
+
+// an item is an integer, a float/double/long, or a quoted string
+item ::=
+    	  Int:i  {: RESULT = i; :}
+	| Num:n  {: RESULT = n; :}
+    	| Str:s  {: RESULT = s; :}
+  	;
+
+// ---- Methods
+methods ::= 
+	  method_list 
+	| /* empty */
+	;
+
+method_list ::= 
+	  method_list method_spec 
+	| method_spec 
+	;
+
+method_spec ::=
+      	  defmethod statements endmethod
+    	| defmethod endmethod
+ 	;
+
+defmethod ::=
+	  DMETHOD access Word:name 	{: String[] aa = ScannerUtils.splitMethodSignature(name);
+					   classFile.beginMethod(access_val, aa[0], aa[1]); :}
+	;
+
+endmethod ::=
+    	  DEND METHOD seps		{: classFile.endMethod(); :}
+  	;
+
+
+// ---- Statements in a method
+statements ::= 
+	  statements stmnt 
+	| stmnt 
+	;
+
+stmnt ::=
+      	  instruction:i			{: classFile.addInstruction(i); :}
+    	| directive
+    	| error
+    	| label:l			{: classFile.addLabel(l); :}
+	| SEP
+  	;
+
+// label:
+label ::=
+    	  Word:label COLON		{: RESULT = label; :}
+  	;
+
+// Directives (.catch, .set, .limit, etc.)
+directive ::=
+    	  DVAR var_expr SEP
+    	| DLIMIT limit_expr SEP
+    	| DLINE line_expr SEP
+    	| DTHROWS throws_expr SEP
+    	| DCATCH catch_expr SEP
+    	| DSET set_expr SEP
+  	;
+
+
+// .var <num> is <name> <sig> from StartLab to EndLab
+var_expr ::=
+    	  Int:reg IS Word:name Word:sig FROM Word:slab TO Word:elab 
+    	| Int:reg IS Word:name Word:sig
+	;
+
+
+// .limit stack <val>
+// .limit locals <val>
+limit_expr ::=
+    	  Word:w Int:v		{: 
+			          if (w.equals("stack"))
+				    classFile.currentMethod().setStackSize(v.intValue());
+				  else
+				    classFile.currentMethod().setVarSize(v.intValue());
+				:}
+      	;
+
+
+// .line <num>
+line_expr ::=
+    	  Int:v
+	;
+
+// .throws <class>
+throws_expr ::=
+    	  classname:s
+  	;
+
+// .catch <class> from <label1> to <label2> using <branchlab>
+catch_expr ::=
+    	  classname:aclass FROM Word:fromlab TO Word:tolab USING Word:branchlab
+	;
+
+// .set <var> = <val>
+set_expr ::=
+    	  Word:name Int:v 
+    	| Word:name Word:v
+    	| Word:name Num:v 
+    	| Word:name Str:v 
+	;
+
+instruction ::=
+    	  simple_instruction:si SEP 	{: RESULT = si; :} 
+    	| complex_instruction:ci SEP	{: RESULT = ci; :}
+ 	;
+
+// Various patterns of instruction:
+//      instruction [<pattern>]
+simple_instruction ::= 
+	  Insn:i			{: RESULT = new Instruction(i); :}
+	| Insn:i Int:n1 Int:n2		{: RESULT = new Iinc(i, n1.intValue(), n2.intValue()); :}
+	| Insn:i Int:n1 		{: 
+					   if  (i.equals("ldc") || i.equals("ldc_w")) 
+					     RESULT = new LdcInteger(i, n1.intValue());
+					   else if (i.equals("ldc2_w"))
+					     RESULT = new LdcLong(i, n1.intValue());
+					   else
+					     RESULT = new SimpleInstruction(i, n1.intValue());
+					:}
+	| Insn:i Num:n			{: if (n instanceof Float) {
+					     if (i.equals("ldc") || i.equals("ldc_w"))
+				     	       RESULT = new LdcFloat(i, ((Float)n).floatValue());
+					     else if (i.equals("ldc2_w"))
+				               RESULT = new LdcDouble(i, (double)((Float)n).floatValue());
+					   } else if (n instanceof Double) {
+					       if (i.equals("ldc") || i.equals("ldc_w")) {
+					         RESULT = new LdcFloat(i, (float)((Double)n).doubleValue());
+						 //System.out.println("Argument for Ldc too big!");
+					         //System.exit(1);
+					       } else if (i.equals("ldc2_w")) 
+						 RESULT = new LdcDouble(i, ((Double)n).doubleValue());
+					   } else if (n instanceof Long) {
+                               		        if (i.equals("ldc") || i.equals("ldc_w")) {
+					         System.out.println("Argument for Ldc too big!");
+					         System.exit(1);
+					       } else if (i.equals("ldc2_w")) 
+						 RESULT = new LdcLong(i, ((Long)n).longValue());
+                                           } 
+					   else {
+					     System.out.println("ldc argument corrupt!");
+					     System.exit(1);
+					   }
+					:}
+	| Insn:i Word:n 		{: 
+				           if  (i.equals("anewarray") ||
+			  			i.equals("new") ||
+						i.equals("checkcast") ||
+						i.equals("instanceof")) 
+					     RESULT = new ClassRef(i, n);
+					   else if (i.equals("invokespecial") ||
+						    i.equals("invokevirtual") ||
+						    i.equals("invokenonvirtual") ||
+						    i.equals("invokestatic"))
+					     RESULT = new MethodInvocation(i, n);
+					  else
+					     RESULT = new Jump(i, n);
+					:}
+	| Insn:i Word:n1 Int:n2		{: RESULT = new InterfaceInvocation(i,n1,((Integer)n2).intValue()); :}
+	| Insn:i Word:n1 Word:n2    	{: RESULT = new FieldRef(i, n1, n2); :} 
+	| Insn:i Str:n			{: RESULT = new LdcString(i,n); :}
+	;
+
+// complex (i.e. multiline) instructions
+//      lookupswitch <lookup>
+//      tableswitch  <table>
+complex_instruction ::=
+    	  LOOKUPSWITCH lookup   {: RESULT = new LookupSwitch("lookupswitch", tm); :}
+    	| TABLESWITCH table
+ 	;
+
+// lookupswitch
+//     <value> : <label>
+//     <value> : <label>
+//     ...
+//     default : <label>
+lookup ::= 
+    	  lookup_args lookup_list SEP lookup_default {: RESULT = tm; :}
+  	;
+
+lookup_args ::= SEP 	{: tm = new TreeMap<String,String>(); :}
+	;
+
+lookup_list ::=
+    	  lookup_list SEP lookup_entry 
+	| lookup_entry
+ 	;
+
+lookup_entry ::=
+    	  Int:i COLON Word:w {: tm.put(""+i,w); :}
+  	;
+
+lookup_default ::=
+    	  DEFAULT COLON Word:w {: tm.put(new String("default"), w); :}
+  	;
+
+
+// tableswitch <low> [<high>]
+//     <label>
+//     <label>
+//     ...
+//     default : <label>
+table ::=
+    	  table_args table_list table_default
+  	;
+
+table_args ::=
+    	  Int:low      /* one argument : the <low> parameter */
+    	| Int:low Int:high      /* two arguments : <low> and <high> parameters */
+ 	;
+
+table_list ::=
+    	  table_list table_entry 
+	| table_entry
+  	;
+
+table_entry ::=
+    	  Word:w 
+ 	;
+
+table_default ::=
+    	  DEFAULT COLON Word:w
+        ;
