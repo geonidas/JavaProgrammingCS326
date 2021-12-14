@@ -1,0 +1,29 @@
+#!/bin/bash
+
+file="infixFile"
+pwd=`pwd`
+dir="$pwd"
+suc=0
+fail=0
+count=0
+echo -e "$dir"
+echo -e "Testing file '$file'"
+while IFS='=' read -ra LINES; do
+	line="${LINES[0]}"
+	s1="${LINES[1]}"
+	s2=`java -cp bin/:. EVM  "$line"`
+	count=$((count+1))
+	if [[ "$s1" == "$s2" ]]; then
+		echo "(${count}) ${line} = ${s2}"
+		echo -e "\033[1;32mPASSED\033[0m"
+		suc=$((suc+1))
+	else
+		echo "${line} = ${s2}, correct result ${s1}"
+		echo -e "\033[1;31mFAILED\033[0m"
+		fail=$((fail+1))
+	fi
+done < "$file"
+echo -e "----------------------------------------"
+echo -e "$suc tests \033[1;32msucceeded\033[0m"
+echo -e "$fail tests \033[1;31mfailed\033[0m"
+echo -e "========================================\n\n"
